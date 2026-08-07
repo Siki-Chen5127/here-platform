@@ -1,0 +1,14 @@
+.idea/
+backend/.env
+backend/.venv/
+backend/__pycache__/
+backend/.pytest_cache/
+backend/uploads/
+backend/*.pyc
+backend/*.db
+backend/here-dev.db
+backend/*.log
+HERE-PC-Web/node_modules/
+HERE-PC-Web/dist/
+HERE-PC-Web/.env.local
+HERE-PC-Web/*.log
