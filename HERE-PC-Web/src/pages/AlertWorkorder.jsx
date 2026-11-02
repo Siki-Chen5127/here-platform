@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { ShieldAlert, CheckCircle2, AlertTriangle, PhoneCall, FileText, User, Loader2 } from 'lucide-react';
+import { NoticeDialog } from '../components/Dialog';
 import { api } from '../services/api';
 
 export default function AlertWorkorder() {
   const [orders, setOrders] = useState([]); // 存放从后端拿到的数据
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [noticeOpen, setNoticeOpen] = useState(false);
 
   const fetchOrders = () => {
     setIsLoading(true);
@@ -44,7 +46,7 @@ export default function AlertWorkorder() {
   const handleResolve = (id) => {
     api.post(`/workorders/${id}/resolve`, { note: '' })
       .then(() => {
-        alert("处理成功！");
+        setNoticeOpen(true);
         fetchOrders(); // 重新刷新列表
       });
   };
@@ -59,6 +61,7 @@ export default function AlertWorkorder() {
   }
 
   return (
+    <>
     <div className="flex h-full gap-6">
       {/* 左侧：工单列表区 */}
       <div className="w-1/3 flex flex-col h-full bg-white/80 backdrop-blur-xl border border-slate-100 rounded-3xl shadow-sm overflow-hidden">
@@ -106,5 +109,12 @@ export default function AlertWorkorder() {
         ) : <p>请选择工单</p>}
       </div>
     </div>
+    <NoticeDialog
+      open={noticeOpen}
+      title="处理完成"
+      message="工单已经完成处理并刷新列表。"
+      onClose={() => setNoticeOpen(false)}
+    />
+    </>
   );
 }

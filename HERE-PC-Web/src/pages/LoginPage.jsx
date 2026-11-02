@@ -1,6 +1,6 @@
 import { ArrowLeft, ArrowRight, HeartPulse, LoaderCircle, Lock, Mail, UserPlus } from 'lucide-react'
 import { useState } from 'react'
-import { authApi } from '../services/api'
+import { authApi, getApiErrorMessage } from '../services/api'
 
 const demoAccounts = [
   { label: '辅导员', email: 'counselor@here.edu', password: 'Counselor123!' },
@@ -10,11 +10,19 @@ const demoAccounts = [
 ]
 
 export default function LoginPage({ onLogin }) {
-  const [mode, setMode] = useState('login')
+  const initialResetToken = new URLSearchParams(window.location.search).get('reset_token') || ''
+  const [mode, setMode] = useState(initialResetToken ? 'reset' : 'login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isLoggingIn, setIsLoggingIn] = useState(false)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [recovery, setRecovery] = useState({
+    email: '',
+    token: initialResetToken,
+    password: '',
+    confirmPassword: '',
+  })
   const [registration, setRegistration] = useState({
     name: '',
     email: '',
@@ -43,8 +51,65 @@ export default function LoginPage({ onLogin }) {
     setError('')
   }
 
+  const requestReset = async (event) => {
+    event.preventDefault()
+    setIsLoggingIn(true)
+    setError('')
+    setSuccess('')
+    try {
+      const result = await authApi.requestPasswordReset(recovery.email.trim().toLowerCase())
+      if (result.debugToken) {
+        setRecovery((current) => ({ ...current, token: result.debugToken }))
+        setSuccess('本地开发模式已生成重置码，请设置新密码')
+        setMode('reset')
+      } else {
+        setSuccess(result.message)
+      }
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError, '密码重置申请失败'))
+    } finally {
+      setIsLoggingIn(false)
+    }
+  }
+
+  const confirmReset = async (event) => {
+    event.preventDefault()
+    if (recovery.password !== recovery.confirmPassword) {
+      setError('两次输入的密码不一致')
+      return
+    }
+    setIsLoggingIn(true)
+    setError('')
+    try {
+      const result = await authApi.confirmPasswordReset(recovery.token.trim(), recovery.password)
+      window.history.replaceState({}, '', window.location.pathname)
+      setMode('login')
+      setPassword('')
+      setSuccess(result.message)
+      setRecovery({ email: '', token: '', password: '', confirmPassword: '' })
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError, '密码重置失败'))
+    } finally {
+      setIsLoggingIn(false)
+    }
+  }
+
   const submitRegistration = async (event) => {
     event.preventDefault()
+    const normalizedName = registration.name.trim()
+    const normalizedEmail = registration.email.trim().toLowerCase()
+    if (!normalizedName) {
+      setError('请输入姓名')
+      return
+    }
+    if (!/^[^\s@]+@[^\s@]+$/.test(normalizedEmail)) {
+      setError('请输入有效的工作邮箱')
+      return
+    }
+    if (registration.password.length < 8) {
+      setError('密码至少需要 8 个字符')
+      return
+    }
     if (registration.password !== registration.confirmPassword) {
       setError('两次输入的密码不一致')
       return
@@ -53,8 +118,8 @@ export default function LoginPage({ onLogin }) {
     setError('')
     try {
       const session = await authApi.register({
-        name: registration.name,
-        email: registration.email,
+        name: normalizedName,
+        email: normalizedEmail,
         requested_role: registration.requested_role,
         password: registration.password,
       })
@@ -126,6 +191,7 @@ export default function LoginPage({ onLogin }) {
                 </div>
               </label>
               {error && <p className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
+              {success && <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</p>}
               <button
                 type="submit"
                 disabled={isLoggingIn}
@@ -134,6 +200,18 @@ export default function LoginPage({ onLogin }) {
                 {isLoggingIn ? <LoaderCircle className="animate-spin" size={19} /> : <>登录 <ArrowRight size={18} /></>}
               </button>
                 </form>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('forgot')
+                    setError('')
+                    setSuccess('')
+                  }}
+                  className="mt-3 w-full text-center text-sm text-emerald-700 hover:underline"
+                >
+                  忘记密码
+                </button>
 
                 <button
                   type="button"
@@ -165,7 +243,7 @@ export default function LoginPage({ onLogin }) {
               </div>
                 )}
               </>
-            ) : (
+            ) : mode === 'register' ? (
               <>
                 <button
                   type="button"
@@ -248,6 +326,54 @@ export default function LoginPage({ onLogin }) {
                   >
                     {isLoggingIn ? <LoaderCircle className="animate-spin" size={19} /> : <UserPlus size={18} />}
                     注册并填写资料
+                  </button>
+                </form>
+              </>
+            ) : mode === 'forgot' ? (
+              <>
+                <button type="button" onClick={() => setMode('login')} className="mb-5 rounded-md p-2 text-slate-500 hover:bg-slate-100" title="返回登录" aria-label="返回登录">
+                  <ArrowLeft size={19} />
+                </button>
+                <h2 className="text-xl font-bold">找回密码</h2>
+                <p className="mt-1 text-sm text-slate-500">输入注册邮箱，系统将发送限时重置链接</p>
+                <form className="mt-7 space-y-4" onSubmit={requestReset}>
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-medium text-slate-700">注册邮箱</span>
+                    <input type="email" required value={recovery.email} onChange={(event) => setRecovery({ ...recovery, email: event.target.value })} className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-emerald-600" />
+                  </label>
+                  {error && <p className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
+                  {success && <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</p>}
+                  <button type="submit" disabled={isLoggingIn} className="flex h-11 w-full items-center justify-center rounded-md bg-emerald-700 text-sm font-semibold text-white disabled:opacity-50">
+                    {isLoggingIn ? <LoaderCircle className="animate-spin" size={19} /> : '发送重置说明'}
+                  </button>
+                </form>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={() => setMode('login')} className="mb-5 rounded-md p-2 text-slate-500 hover:bg-slate-100" title="返回登录" aria-label="返回登录">
+                  <ArrowLeft size={19} />
+                </button>
+                <h2 className="text-xl font-bold">设置新密码</h2>
+                <p className="mt-1 text-sm text-slate-500">重置码只能使用一次，并在 30 分钟后失效</p>
+                <form className="mt-7 space-y-4" onSubmit={confirmReset}>
+                  {!initialResetToken && (
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm font-medium text-slate-700">重置码</span>
+                      <input required value={recovery.token} onChange={(event) => setRecovery({ ...recovery, token: event.target.value })} className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-emerald-600" />
+                    </label>
+                  )}
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-medium text-slate-700">新密码</span>
+                    <input type="password" required minLength={8} autoComplete="new-password" value={recovery.password} onChange={(event) => setRecovery({ ...recovery, password: event.target.value })} className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-emerald-600" />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-medium text-slate-700">确认新密码</span>
+                    <input type="password" required minLength={8} autoComplete="new-password" value={recovery.confirmPassword} onChange={(event) => setRecovery({ ...recovery, confirmPassword: event.target.value })} className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-emerald-600" />
+                  </label>
+                  {success && <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</p>}
+                  {error && <p className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
+                  <button type="submit" disabled={isLoggingIn} className="flex h-11 w-full items-center justify-center rounded-md bg-emerald-700 text-sm font-semibold text-white disabled:opacity-50">
+                    {isLoggingIn ? <LoaderCircle className="animate-spin" size={19} /> : '确认重置密码'}
                   </button>
                 </form>
               </>

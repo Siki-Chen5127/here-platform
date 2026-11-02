@@ -15,6 +15,7 @@ from sqlalchemy import (
     Unicode,
     UnicodeText,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -66,6 +67,18 @@ class StaffUser(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     account_status: Mapped[str] = mapped_column(String(32), default="active", index=True)
     review_scopes: Mapped[str] = mapped_column(String(100), default="")
+    auth_version: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class StaffPasswordReset(Base):
+    __tablename__ = "staff_password_resets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    staff_user_id: Mapped[str] = mapped_column(ForeignKey("staff_users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class StaffProfile(TimestampMixin, Base):
@@ -131,13 +144,21 @@ class StaffCredential(Base):
 
 class StudentProfile(TimestampMixin, Base):
     __tablename__ = "student_profiles"
+    __table_args__ = (
+        Index(
+            "ix_student_profiles_student_number",
+            "student_number",
+            unique=True,
+            mssql_where=text("student_number IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     student_id: Mapped[str] = mapped_column(
         ForeignKey("student_users.id", ondelete="CASCADE"),
         unique=True,
     )
-    student_number: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    student_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
     college: Mapped[str | None] = mapped_column(Unicode(100), nullable=True, index=True)
     major: Mapped[str | None] = mapped_column(Unicode(100), nullable=True)
     class_name: Mapped[str | None] = mapped_column(Unicode(100), nullable=True, index=True)
@@ -190,6 +211,9 @@ class WorkOrder(TimestampMixin, Base):
     __tablename__ = "work_orders"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    business_number: Mapped[str] = mapped_column(
+        String(32), unique=True, index=True
+    )
     alert_id: Mapped[str] = mapped_column(ForeignKey("alerts.id"), unique=True, index=True)
     assignee_id: Mapped[str | None] = mapped_column(ForeignKey("staff_users.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
@@ -212,8 +236,17 @@ class Intervention(Base):
 
 class ConsultationAssignment(TimestampMixin, Base):
     __tablename__ = "consultation_assignments"
+    __table_args__ = (
+        Index(
+            "ix_consultation_assignments_work_order_id",
+            "work_order_id",
+            unique=True,
+            mssql_where=text("work_order_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    work_order_id: Mapped[str | None] = mapped_column(ForeignKey("work_orders.id"), nullable=True)
     student_id: Mapped[str] = mapped_column(ForeignKey("student_users.id"), index=True)
     psychologist_id: Mapped[str] = mapped_column(ForeignKey("staff_users.id"), index=True)
     status: Mapped[str] = mapped_column(String(32), default="assigned", index=True)

@@ -76,19 +76,6 @@ export default function DashboardPage({ user }) {
           )
         })}
       </section>
-
-      <section className="border-t border-slate-200 pt-6">
-        <h3 className="font-semibold">数据范围说明</h3>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-          {user.role === 'admin'
-            ? '这里只显示系统运行和账号统计，不展示学生预警、咨询记录或干预内容。'
-            : user.role === 'center_director'
-              ? '这里只显示中心运行汇总和资料审核数量，不展示咨询谈话原文或完整个案记录。'
-            : user.role === 'counselor'
-              ? '统计仅包含分配给你的学生和你本人创建的干预记录。'
-              : '统计仅包含分配给你的授权个案、转介工单和服务记录。'}
-        </p>
-      </section>
     </div>
   )
 }

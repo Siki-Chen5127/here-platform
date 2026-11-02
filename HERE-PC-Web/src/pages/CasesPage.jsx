@@ -1,4 +1,4 @@
-import { ShieldCheck, ShieldQuestion } from 'lucide-react'
+import { Phone, ShieldCheck, ShieldQuestion } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { EmptyState, ErrorState, LoadingState } from '../components/PageState'
 import { api } from '../services/api'
@@ -53,11 +53,14 @@ export default function CasesPage() {
         {cases.map((item) => (
           <article key={item.id} className="grid gap-4 px-5 py-5 hover:bg-slate-50 md:grid-cols-[1fr_180px_140px] md:items-center">
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-semibold">{item.student}</h3>
-                <span className="text-xs text-slate-400">{item.studentNumber || '无学号'}</span>
-              </div>
-              <p className="mt-1 text-sm text-slate-500">{[item.college, item.className].filter(Boolean).join(' / ') || '院系信息未完善'}</p>
+              <h3 className="font-semibold">{item.student}</h3>
+              <a
+                href={`tel:${item.phone}`}
+                className="mt-1 inline-flex items-center gap-1.5 text-sm text-emerald-700 hover:underline"
+              >
+                <Phone size={15} />
+                {item.phone}
+              </a>
             </div>
             <div className="text-sm text-slate-600">
               {item.scheduledAt ? new Date(item.scheduledAt).toLocaleString('zh-CN') : '尚未预约'}

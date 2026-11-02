@@ -114,6 +114,8 @@ def _admin_managed_document(
 
 
 def _review_scopes(staff: StaffUser) -> set[str]:
+    if staff.role == "admin":
+        return {"psychology", "student_affairs"}
     scopes = {item for item in staff.review_scopes.split(",") if item}
     if not scopes and staff.role in REVIEWER_ROLES:
         scopes.add("psychology")

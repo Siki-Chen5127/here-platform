@@ -49,6 +49,7 @@ def _profile_view(profile: StaffProfile | None) -> dict | None:
 
 def _public_profile_data(profile_data: dict) -> dict:
     result = {
+        "email": profile_data.get("email"),
         "realName": profile_data["real_name"],
         "displayName": profile_data["display_name"],
         "phone": profile_data["phone"],
@@ -83,6 +84,9 @@ def _application_view(application: StaffApplication, session: Session) -> dict:
             .order_by(StaffCredential.created_at)
         )
     )
+    profile = _public_profile_data(json.loads(application.profile_data))
+    if not profile.get("email") and applicant:
+        profile["email"] = applicant.email
     return {
         "id": application.id,
         "applicantId": application.staff_user_id,
@@ -91,7 +95,7 @@ def _application_view(application: StaffApplication, session: Session) -> dict:
         "requestedRole": application.requested_role,
         "applicationType": application.application_type,
         "status": application.status,
-        "profile": _public_profile_data(json.loads(application.profile_data)),
+        "profile": profile,
         "credentials": [_credential_view(item) for item in credentials],
         "reviewNote": application.review_note,
         "reviewer": reviewer.name if reviewer else None,
@@ -162,6 +166,7 @@ def get_staff_profile_details(
 
 @router.post("/staff/applications", status_code=status.HTTP_201_CREATED)
 async def submit_staff_application(
+    email: str = Form(..., min_length=3, max_length=255),
     real_name: str = Form(..., min_length=1, max_length=100),
     display_name: str = Form(..., min_length=1, max_length=100),
     phone: str = Form(..., min_length=6, max_length=32),
@@ -171,6 +176,7 @@ async def submit_staff_application(
     employee_number: str = Form(..., min_length=1, max_length=64),
     requested_role: ApplicantRole = Form(...),
     id_number: str | None = Form(default=None, max_length=32),
+    reuse_credential_ids: list[str] | None = Form(default=None),
     proofs: list[UploadFile] | None = File(default=None),
     staff: StaffUser = Depends(get_current_staff_account),
     session: Session = Depends(get_db),
@@ -184,8 +190,52 @@ async def submit_staff_application(
     )
     is_registration = profile is None and staff.account_status != "active"
     uploaded_files = proofs or []
-    if profile is None and not uploaded_files:
+
+    requested_reuse_ids = list(dict.fromkeys(reuse_credential_ids or []))
+    reusable_credentials: list[StaffCredential] = []
+    if requested_reuse_ids:
+        if latest is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="没有可以沿用的证明文件",
+            )
+        reusable_credentials = list(
+            session.scalars(
+                select(StaffCredential).where(
+                    StaffCredential.id.in_(requested_reuse_ids),
+                    StaffCredential.staff_user_id == staff.id,
+                    StaffCredential.application_id == latest.id,
+                )
+            )
+        )
+        if len(reusable_credentials) != len(requested_reuse_ids):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="部分证明文件不可沿用，请刷新页面后重试",
+            )
+        if any(not Path(item.storage_path).is_file() for item in reusable_credentials):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="原证明文件已丢失，请重新上传",
+            )
+
+    if profile is None and not uploaded_files and not reusable_credentials:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="首次申请必须上传任职或资质证明")
+
+    normalized_email = email.strip().lower()
+    email_parts = normalized_email.split("@")
+    if len(email_parts) != 2 or not all(email_parts) or any(
+        character.isspace() for character in normalized_email
+    ):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="工作邮箱格式不正确")
+    duplicate_email = session.scalar(
+        select(StaffUser.id).where(
+            StaffUser.email == normalized_email,
+            StaffUser.id != staff.id,
+        )
+    )
+    if duplicate_email:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该工作邮箱已被其他账号使用")
 
     normalized_phone = phone.strip()
     duplicate_phone = session.scalar(
@@ -217,6 +267,7 @@ async def submit_staff_application(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该身份证信息已用于其他工作人员资料")
 
     profile_data = {
+        "email": normalized_email,
         "real_name": real_name.strip(),
         "display_name": display_name.strip(),
         "phone": normalized_phone,
@@ -239,6 +290,18 @@ async def submit_staff_application(
 
     stored_paths: list[str] = []
     try:
+        for credential in reusable_credentials:
+            session.add(
+                StaffCredential(
+                    staff_user_id=staff.id,
+                    application_id=application.id,
+                    credential_type=credential.credential_type,
+                    original_name=credential.original_name,
+                    storage_path=credential.storage_path,
+                    content_type=credential.content_type,
+                    size_bytes=credential.size_bytes,
+                )
+            )
         for proof in uploaded_files:
             original_name, storage_path, size, content_type = await _store_proof(proof)
             stored_paths.append(storage_path)
@@ -338,6 +401,15 @@ def review_staff_application(
 
     if payload.action == "approve":
         data = json.loads(application.profile_data)
+        requested_email = data.get("email") or applicant.email
+        duplicate_email = session.scalar(
+            select(StaffUser.id).where(
+                StaffUser.email == requested_email,
+                StaffUser.id != applicant.id,
+            )
+        )
+        if duplicate_email:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该工作邮箱已被其他账号使用")
         duplicate_profile = session.scalar(
             select(StaffProfile).where(
                 StaffProfile.staff_user_id != applicant.id,
@@ -366,6 +438,7 @@ def review_staff_application(
         profile.employee_number = data["employee_number"]
         profile.id_number_hash = data.get("id_number_hash")
         profile.id_number_last4 = data.get("id_number_last4")
+        applicant.email = requested_email
         applicant.name = data["display_name"]
         applicant.department = data["department"]
         applicant.role = application.requested_role

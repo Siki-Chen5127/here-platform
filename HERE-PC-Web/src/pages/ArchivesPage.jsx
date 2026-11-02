@@ -41,7 +41,9 @@ export default function ArchivesPage({ role }) {
     <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="border-b border-slate-200 px-5 py-4">
         <h2 className="font-semibold">{role === 'psychologist' ? '服务档案' : '干预档案'}</h2>
-        <p className="mt-1 text-xs text-slate-500">仅展示当前账号本人形成的记录</p>
+        <p className="mt-1 text-xs text-slate-500">
+          {role === 'counselor' ? '展示负责学生已经完成闭环的处置记录' : '仅展示已经完成闭环的服务记录'}
+        </p>
       </div>
       <div className="divide-y divide-slate-100">
         {archives.map((archive) => (
@@ -52,7 +54,8 @@ export default function ArchivesPage({ role }) {
             <div>
               <p className="text-sm font-semibold">{archive.student}</p>
               <p className="mt-1 text-sm leading-6 text-slate-600">{archive.note || '未填写补充说明'}</p>
-              <p className="mt-2 font-mono text-xs text-slate-400">工单 {archive.workOrderId}</p>
+              <p className="mt-2 font-mono text-xs text-slate-400">工单 {archive.workOrderNumber}</p>
+              {role !== 'psychologist' && <p className="mt-1 text-xs text-slate-400">处置人：{archive.staff}</p>}
             </div>
             <time className="text-xs text-slate-500">{new Date(archive.createdAt).toLocaleString('zh-CN')}</time>
           </article>

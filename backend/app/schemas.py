@@ -16,6 +16,15 @@ StaffRole = Literal[
 ApplicantRole = Literal["counselor", "psychologist", "center_director"]
 KnowledgeDomain = Literal["psychology", "student_affairs"]
 AlertSeverity = Literal["low", "medium", "high", "critical"]
+AiChatRole = Literal["user", "assistant"]
+
+
+def _normalize_email_value(value: str) -> str:
+    normalized = value.strip().lower()
+    parts = normalized.split("@")
+    if len(parts) != 2 or not all(parts) or any(character.isspace() for character in normalized):
+        raise ValueError("请输入有效邮箱")
+    return normalized
 
 
 class StaffLoginRequest(BaseModel):
@@ -25,10 +34,7 @@ class StaffLoginRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if "@" not in normalized:
-            raise ValueError("请输入有效邮箱")
-        return normalized
+        return _normalize_email_value(value)
 
 
 class StaffCreateRequest(BaseModel):
@@ -41,15 +47,15 @@ class StaffCreateRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if "@" not in normalized:
-            raise ValueError("请输入有效邮箱")
-        return normalized
+        return _normalize_email_value(value)
 
     @field_validator("name")
     @classmethod
     def normalize_name(cls, value: str) -> str:
-        return value.strip()
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("姓名不能为空")
+        return normalized
 
 
 class StaffRegistrationRequest(BaseModel):
@@ -61,14 +67,42 @@ class StaffRegistrationRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if "@" not in normalized:
-            raise ValueError("请输入有效邮箱")
-        return normalized
+        return _normalize_email_value(value)
 
     @field_validator("name")
     @classmethod
     def normalize_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("姓名不能为空")
+        return normalized
+
+
+class StaffPasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class StaffPasswordResetRequest(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return _normalize_email_value(value)
+
+
+class StaffPasswordResetConfirmRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=200)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class StaffAccountCloseRequest(BaseModel):
+    reason: str = Field(min_length=2, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
         return value.strip()
 
 
@@ -138,6 +172,12 @@ class MobileRegisterRequest(BaseModel):
     phone: str = Field(min_length=6, max_length=32)
     password: str = Field(min_length=8, max_length=128)
     display_name: str = Field(default="", max_length=100)
+    college: str = Field(min_length=1, max_length=100)
+
+
+class MobileProfileUpdate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=100)
+    college: str = Field(min_length=1, max_length=100)
 
 
 class MobileLoginRequest(BaseModel):
@@ -180,22 +220,58 @@ class AlertCreate(BaseModel):
     longitude: float | None = Field(default=None, ge=-180, le=180)
 
 
+class AiChatMessage(BaseModel):
+    role: AiChatRole
+    content: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("content")
+    @classmethod
+    def normalize_content(cls, value: str) -> str:
+        return value.strip()
+
+
+class MobileAiChatRequest(BaseModel):
+    messages: list[AiChatMessage] = Field(min_length=1, max_length=12)
+
+
+class MobileSafetyAnalysisRequest(BaseModel):
+    safety_score: int = Field(ge=0, le=100)
+    alert_count: int = Field(ge=0, le=10000)
+    night_trip_count: int = Field(ge=0, le=10000)
+    active_hours: float = Field(ge=0, le=168)
+
+
+class MobileAiResponse(BaseModel):
+    content: str
+    model: str
+
+
 class WorkOrderResolveRequest(BaseModel):
     note: str = Field(default="", max_length=4000)
+
+
+class WorkOrderReferralRequest(BaseModel):
+    psychologist_id: str = Field(min_length=1, max_length=36)
+    note: str = Field(min_length=1, max_length=4000)
+    basis: Literal["student_consent", "emergency_protocol"]
 
 
 class WorkOrderView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    number: str
     level: str
     levelText: str
     time: str
     source: str
     student: str
+    studentPhone: str
     summary: str
     details: str
     status: str
+    assigneeName: str | None = None
+    assigneeRole: str | None = None
 
 
 class HealthResponse(BaseModel):

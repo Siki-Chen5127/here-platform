@@ -12,3 +12,6 @@ HERE-PC-Web/node_modules/
 HERE-PC-Web/dist/
 HERE-PC-Web/.env.local
 HERE-PC-Web/*.log
+
+# 本地 runbook，含演示账号明文密码与真实邮箱，禁止入库
+测试.txt

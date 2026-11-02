@@ -20,6 +20,7 @@ class AuthenticatedActor:
     id: str
     actor_type: str
     role: str
+    auth_version: int
 
 
 def get_current_actor(
@@ -36,13 +37,19 @@ def get_current_actor(
         subject = str(payload["sub"])
         actor_type = str(payload["actor_type"])
         role = str(payload["role"])
+        auth_version = int(payload.get("auth_version", 0))
     except (jwt.InvalidTokenError, KeyError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="登录凭证无效或已过期",
             headers={"WWW-Authenticate": "Bearer"},
         ) from None
-    return AuthenticatedActor(id=subject, actor_type=actor_type, role=role)
+    return AuthenticatedActor(
+        id=subject,
+        actor_type=actor_type,
+        role=role,
+        auth_version=auth_version,
+    )
 
 
 def get_current_staff_account(
@@ -54,6 +61,8 @@ def get_current_staff_account(
     staff = session.get(StaffUser, actor.id)
     if staff is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="工作人员账号不存在")
+    if actor.auth_version != staff.auth_version:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录状态已失效，请重新登录")
     return staff
 
 

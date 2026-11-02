@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from ..database import get_db
 from ..dependencies import get_current_staff, require_staff_roles
@@ -24,8 +24,10 @@ from ..models import (
 )
 from ..schemas import (
     StaffCreateRequest,
+    StaffAccountCloseRequest,
     StaffReviewScopesRequest,
     StaffStatusUpdateRequest,
+    WorkOrderReferralRequest,
     WorkOrderResolveRequest,
     WorkOrderView,
 )
@@ -45,6 +47,10 @@ AUDIT_ACTION_LABELS = {
     "staff.create": "创建工作人员账号",
     "staff.activate": "启用工作人员账号",
     "staff.deactivate": "停用工作人员账号",
+    "staff.close": "注销工作人员账号",
+    "staff.password.change": "修改登录密码",
+    "staff.password.reset": "重置登录密码",
+    "work_order.refer": "转介预警工单",
     "work_order.resolve": "完成预警工单",
     "knowledge.create": "新建知识资料草稿",
     "knowledge.update": "修改知识资料",
@@ -86,10 +92,7 @@ def _work_order_scope(statement, staff: StaffUser):
             StudentProfile.student_id == Alert.student_id,
         ).where(
             (WorkOrder.assignee_id == staff.id)
-            | (
-                WorkOrder.assignee_id.is_(None)
-                & (StudentProfile.counselor_id == staff.id)
-            )
+            | (StudentProfile.counselor_id == staff.id)
         )
     if staff.role == "psychologist":
         return statement.where(WorkOrder.assignee_id == staff.id)
@@ -99,32 +102,171 @@ def _work_order_scope(statement, staff: StaffUser):
     )
 
 
+@router.get("/workorders/summary")
+def get_workorder_summary(
+    staff: StaffUser = Depends(get_current_staff),
+    session: Session = Depends(get_db),
+) -> dict[str, int]:
+    statement = (
+        select(func.count(WorkOrder.id))
+        .select_from(WorkOrder)
+        .join(Alert, WorkOrder.alert_id == Alert.id)
+        .where(WorkOrder.status != "resolved")
+    )
+    scoped_statement = _work_order_scope(statement, staff)
+    if staff.role == "counselor":
+        scoped_statement = scoped_statement.where(
+            (WorkOrder.assignee_id == staff.id) | WorkOrder.assignee_id.is_(None)
+        )
+    pending = session.scalar(scoped_statement) or 0
+    return {"pending": pending}
+
+
 @router.get("/workorders", response_model=list[WorkOrderView])
 def get_workorders(
     staff: StaffUser = Depends(get_current_staff),
     session: Session = Depends(get_db),
 ) -> list[WorkOrderView]:
+    assignee = aliased(StaffUser)
     statement = (
-        select(WorkOrder, Alert, StudentUser)
+        select(WorkOrder, Alert, StudentUser, assignee)
         .join(Alert, WorkOrder.alert_id == Alert.id)
         .join(StudentUser, Alert.student_id == StudentUser.id)
+        .outerjoin(assignee, WorkOrder.assignee_id == assignee.id)
         .order_by(WorkOrder.created_at.desc())
     )
     rows = session.execute(_work_order_scope(statement, staff)).all()
     return [
         WorkOrderView(
             id=work_order.id,
+            number=work_order.business_number,
             level=work_order.priority,
             levelText=LEVEL_TEXT.get(work_order.priority, work_order.priority),
             time=work_order.created_at.isoformat(),
             source=alert.source,
             student=student.display_name or student.phone,
+            studentPhone=student.phone,
             summary=work_order.summary,
             details=alert.description or "",
             status=work_order.status,
+            assigneeName=current_assignee.name if current_assignee else None,
+            assigneeRole=current_assignee.role if current_assignee else None,
         )
-        for work_order, alert, student in rows
+        for work_order, alert, student, current_assignee in rows
     ]
+
+
+@router.get("/staff/psychologists")
+def get_available_psychologists(
+    _staff: StaffUser = Depends(require_staff_roles("counselor")),
+    session: Session = Depends(get_db),
+) -> list[dict]:
+    active_assignment = ConsultationAssignment.status.in_(("assigned", "scheduled", "active"))
+    rows = session.execute(
+        select(
+            StaffUser.id,
+            StaffUser.name,
+            StaffUser.department,
+            func.count(ConsultationAssignment.id).label("active_cases"),
+        )
+        .outerjoin(
+            ConsultationAssignment,
+            (ConsultationAssignment.psychologist_id == StaffUser.id) & active_assignment,
+        )
+        .where(
+            StaffUser.role == "psychologist",
+            StaffUser.is_active == 1,
+            StaffUser.account_status == "active",
+        )
+        .group_by(StaffUser.id, StaffUser.name, StaffUser.department)
+        .order_by(func.count(ConsultationAssignment.id), StaffUser.name)
+    ).all()
+    return [
+        {
+            "id": psychologist_id,
+            "name": name,
+            "department": department,
+            "activeCases": active_cases,
+        }
+        for psychologist_id, name, department, active_cases in rows
+    ]
+
+
+@router.post("/workorders/{order_id}/refer")
+def refer_work_order(
+    order_id: str,
+    payload: WorkOrderReferralRequest,
+    counselor: StaffUser = Depends(require_staff_roles("counselor")),
+    session: Session = Depends(get_db),
+) -> dict[str, str]:
+    statement = (
+        select(WorkOrder, Alert)
+        .join(Alert, WorkOrder.alert_id == Alert.id)
+        .where(WorkOrder.id == order_id)
+    )
+    row = session.execute(_work_order_scope(statement, counselor)).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工单不存在或无权转介")
+    work_order, alert = row
+    if work_order.status == "resolved":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="已完成工单不能再次转介")
+
+    psychologist = session.get(StaffUser, payload.psychologist_id)
+    if psychologist is None or psychologist.role != "psychologist":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="心理咨询师不存在")
+    if not psychologist.is_active or psychologist.account_status != "active":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该心理咨询师当前不可接收转介")
+    if session.scalar(
+        select(ConsultationAssignment.id).where(
+            ConsultationAssignment.work_order_id == work_order.id
+        )
+    ):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该工单已经完成转介")
+
+    now = datetime.now(timezone.utc)
+    basis_label = "已取得学生同意" if payload.basis == "student_consent" else "紧急危机应急转介"
+    referral_note = f"{basis_label}；{payload.note.strip()}"
+    assignment = ConsultationAssignment(
+        work_order_id=work_order.id,
+        student_id=alert.student_id,
+        psychologist_id=psychologist.id,
+        status="assigned",
+        consent_granted_at=now if payload.basis == "student_consent" else None,
+    )
+    work_order.assignee_id = psychologist.id
+    work_order.status = "referred"
+    session.add(assignment)
+    session.add(
+        Intervention(
+            work_order_id=work_order.id,
+            staff_user_id=counselor.id,
+            action_type="refer",
+            note=referral_note,
+        )
+    )
+    session.add(
+        AuditLog(
+            actor_type="staff",
+            actor_id=counselor.id,
+            action="work_order.refer",
+            resource_type="work_order",
+            resource_id=work_order.id,
+            detail=f"psychologist={psychologist.name}; basis={payload.basis}",
+        )
+    )
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="该工单已经完成转介，请刷新列表",
+        ) from error
+    return {
+        "status": "referred",
+        "psychologistId": psychologist.id,
+        "psychologistName": psychologist.name,
+    }
 
 
 @router.post("/workorders/{order_id}/resolve")
@@ -142,10 +284,25 @@ def resolve_work_order(
     work_order = session.scalar(_work_order_scope(statement, staff))
     if work_order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工单不存在或无权处理")
+    if staff.role == "counselor" and work_order.assignee_id not in (None, staff.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="该工单已转介心理咨询师，请等待咨询师完成处置",
+        )
 
     work_order.status = "resolved"
     work_order.resolution_note = payload.note.strip() or None
     work_order.resolved_at = datetime.now(timezone.utc)
+    alert = session.get(Alert, work_order.alert_id)
+    if alert:
+        alert.status = "resolved"
+    assignment = session.scalar(
+        select(ConsultationAssignment).where(
+            ConsultationAssignment.work_order_id == work_order.id
+        )
+    )
+    if assignment:
+        assignment.status = "completed"
     session.add(
         Intervention(
             work_order_id=work_order.id,
@@ -223,11 +380,15 @@ def get_dashboard(
             .join(Alert, WorkOrder.alert_id == Alert.id)
             .where(WorkOrder.status != "resolved"),
             staff,
+        ).where(
+            (WorkOrder.assignee_id == staff.id)
+            | WorkOrder.assignee_id.is_(None)
         )
         pending_orders = session.scalar(scoped_orders)
         interventions = session.scalar(
             select(func.count()).select_from(Intervention).where(
-                Intervention.staff_user_id == staff.id
+                Intervention.staff_user_id == staff.id,
+                Intervention.action_type == "resolve",
             )
         )
         return {
@@ -237,7 +398,7 @@ def get_dashboard(
                 {"key": "assignedStudents", "label": "负责学生", "value": assigned_students or 0, "unit": "人"},
                 {"key": "openAlerts", "label": "未关闭预警", "value": open_alerts or 0, "unit": "件"},
                 {"key": "pendingOrders", "label": "待处理工单", "value": pending_orders or 0, "unit": "件"},
-                {"key": "interventions", "label": "我的干预记录", "value": interventions or 0, "unit": "条"},
+                {"key": "interventions", "label": "完成处置", "value": interventions or 0, "unit": "条"},
             ],
         }
 
@@ -381,6 +542,7 @@ def get_consultations(
             "id": assignment.id,
             "studentId": student.id,
             "student": student.display_name or "未填写姓名",
+            "phone": student.phone,
             "studentNumber": profile.student_number if profile else None,
             "college": profile.college if profile else None,
             "className": profile.class_name if profile else None,
@@ -406,15 +568,22 @@ def get_intervention_archives(
         .join(Alert, WorkOrder.alert_id == Alert.id)
         .join(StudentUser, Alert.student_id == StudentUser.id)
         .join(StaffUser, Intervention.staff_user_id == StaffUser.id)
+        .where(Intervention.action_type == "resolve")
         .order_by(Intervention.created_at.desc())
     )
-    if staff.role != "supervisor":
+    if staff.role == "counselor":
+        statement = statement.join(
+            StudentProfile,
+            StudentProfile.student_id == StudentUser.id,
+        ).where(StudentProfile.counselor_id == staff.id)
+    elif staff.role == "psychologist":
         statement = statement.where(Intervention.staff_user_id == staff.id)
     rows = session.execute(statement).all()
     return [
         {
             "id": intervention.id,
             "workOrderId": work_order.id,
+            "workOrderNumber": work_order.business_number,
             "student": student.display_name or student.phone,
             "staff": author.name,
             "actionType": intervention.action_type,
@@ -441,7 +610,13 @@ def get_staff_accounts(
     _staff: StaffUser = Depends(require_staff_roles("admin")),
     session: Session = Depends(get_db),
 ) -> list[dict]:
-    rows = list(session.scalars(select(StaffUser).order_by(StaffUser.created_at.desc())))
+    rows = list(
+        session.scalars(
+            select(StaffUser)
+            .where(StaffUser.account_status != "closed")
+            .order_by(StaffUser.created_at.desc())
+        )
+    )
     profiles = {
         profile.staff_user_id: profile
         for profile in session.scalars(
@@ -464,6 +639,28 @@ def get_staff_accounts(
         }
         for row in rows
     ]
+
+
+@router.get("/admin/review-summary")
+def get_admin_review_summary(
+    _admin: StaffUser = Depends(require_staff_roles("admin")),
+    session: Session = Depends(get_db),
+) -> dict[str, int]:
+    staff_applications = session.scalar(
+        select(func.count())
+        .select_from(StaffApplication)
+        .where(StaffApplication.status == "pending_review")
+    ) or 0
+    knowledge_submissions = session.scalar(
+        select(func.count())
+        .select_from(KnowledgeDocument)
+        .where(KnowledgeDocument.status == "submitted")
+    ) or 0
+    return {
+        "staffApplications": staff_applications,
+        "knowledgeSubmissions": knowledge_submissions,
+        "total": staff_applications + knowledge_submissions,
+    }
 
 
 @router.post("/admin/staff", status_code=status.HTTP_201_CREATED)
@@ -534,6 +731,40 @@ def update_staff_status(
     return {"status": "updated"}
 
 
+@router.post("/admin/staff/{staff_id}/close")
+def close_staff_account(
+    staff_id: str,
+    payload: StaffAccountCloseRequest,
+    admin: StaffUser = Depends(require_staff_roles("admin")),
+    session: Session = Depends(get_db),
+) -> dict[str, str]:
+    target = session.get(StaffUser, staff_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工作人员不存在")
+    if target.id == admin.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能注销当前登录账号")
+    if target.role == "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="管理员账号不能在成员管理中注销")
+    if target.account_status == "closed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该账号已经注销")
+    target.is_active = False
+    target.account_status = "closed"
+    target.review_scopes = ""
+    target.auth_version += 1
+    session.add(
+        AuditLog(
+            actor_type="staff",
+            actor_id=admin.id,
+            action="staff.close",
+            resource_type="staff_user",
+            resource_id=target.id,
+            detail=payload.reason,
+        )
+    )
+    session.commit()
+    return {"status": "closed"}
+
+
 @router.patch("/admin/staff/{staff_id}/review-scopes")
 def update_staff_review_scopes(
     staff_id: str,
@@ -563,12 +794,90 @@ def update_staff_review_scopes(
 
 @router.get("/audit-logs")
 def get_audit_logs(
+    page: int | None = Query(default=None, ge=1),
+    page_size: int = Query(default=25, ge=10, le=100),
+    search: str | None = Query(default=None, max_length=100),
     _staff: StaffUser = Depends(require_staff_roles("admin")),
     session: Session = Depends(get_db),
-) -> list[dict]:
-    rows = list(
-        session.scalars(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(200))
-    )
+) -> list[dict] | dict:
+    normalized_search = search.strip() if search else ""
+    search_condition = None
+    if normalized_search:
+        matched_actions = [
+            action
+            for action, label in AUDIT_ACTION_LABELS.items()
+            if normalized_search.lower() in action.lower() or normalized_search in label
+        ]
+        matched_resource_types = [
+            resource_type
+            for resource_type, label in AUDIT_RESOURCE_LABELS.items()
+            if normalized_search.lower() in resource_type.lower() or normalized_search in label
+        ]
+        conditions = [
+            AuditLog.action.contains(normalized_search),
+            AuditLog.actor_id.contains(normalized_search),
+            AuditLog.resource_id.contains(normalized_search),
+            AuditLog.detail.contains(normalized_search),
+            exists(
+                select(StaffUser.id).where(
+                    StaffUser.id == AuditLog.actor_id,
+                    or_(
+                        StaffUser.name.contains(normalized_search),
+                        StaffUser.email.contains(normalized_search),
+                    ),
+                )
+            ),
+            exists(
+                select(StaffUser.id).where(
+                    StaffUser.id == AuditLog.resource_id,
+                    or_(
+                        StaffUser.name.contains(normalized_search),
+                        StaffUser.email.contains(normalized_search),
+                    ),
+                )
+            ),
+            exists(
+                select(StudentUser.id).where(
+                    StudentUser.id == AuditLog.actor_id,
+                    or_(
+                        StudentUser.display_name.contains(normalized_search),
+                        StudentUser.phone.contains(normalized_search),
+                    ),
+                )
+            ),
+            exists(
+                select(KnowledgeDocument.id).where(
+                    KnowledgeDocument.id == AuditLog.resource_id,
+                    KnowledgeDocument.name.contains(normalized_search),
+                )
+            ),
+            exists(
+                select(WorkOrder.id).where(
+                    WorkOrder.id == AuditLog.resource_id,
+                    WorkOrder.summary.contains(normalized_search),
+                )
+            ),
+        ]
+        if matched_actions:
+            conditions.append(AuditLog.action.in_(matched_actions))
+        if matched_resource_types:
+            conditions.append(AuditLog.resource_type.in_(matched_resource_types))
+        search_condition = or_(*conditions)
+
+    statement = select(AuditLog)
+    if search_condition is not None:
+        statement = statement.where(search_condition)
+    statement = statement.order_by(AuditLog.created_at.desc())
+    total = None
+    if page is None:
+        statement = statement.limit(200)
+    else:
+        count_statement = select(func.count()).select_from(AuditLog)
+        if search_condition is not None:
+            count_statement = count_statement.where(search_condition)
+        total = session.scalar(count_statement) or 0
+        statement = statement.offset((page - 1) * page_size).limit(page_size)
+    rows = list(session.scalars(statement))
     staff_ids = {
         row.actor_id for row in rows if row.actor_type == "staff"
     } | {
@@ -653,7 +962,7 @@ def get_audit_logs(
             return f"{applicant.name}（{applicant.email}）" if applicant else "工作人员入驻申请"
         return row.resource_id or "-"
 
-    return [
+    items = [
         {
             "id": row.id,
             "actorType": row.actor_type,
@@ -671,3 +980,13 @@ def get_audit_logs(
         }
         for row in rows
     ]
+    if page is None:
+        return items
+    pages = max(1, (total + page_size - 1) // page_size)
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "pageSize": page_size,
+        "pages": pages,
+    }

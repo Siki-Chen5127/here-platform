@@ -16,7 +16,7 @@ const applicationTypeLabels = {
   profile_update: '资料变更',
 }
 
-export default function StaffApplicationsPage() {
+export default function StaffApplicationsPage({ onChanged = () => {} }) {
   const [applications, setApplications] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
   const [filter, setFilter] = useState('pending_review')
@@ -63,6 +63,7 @@ export default function StaffApplicationsPage() {
       })
       setNote('')
       await load(filter)
+      onChanged()
     } catch (requestError) {
       setError(requestError.response?.data?.detail || '审核操作失败')
     } finally {
@@ -135,6 +136,7 @@ export default function StaffApplicationsPage() {
               {[
                 ['真实姓名', selected.profile.realName],
                 ['显示名称', selected.profile.displayName],
+                ['申请登录邮箱', selected.profile.email || selected.applicantEmail],
                 ['工作手机号', selected.profile.phone],
                 ['学校或机构', selected.profile.organization],
                 ['所属部门', selected.profile.department],

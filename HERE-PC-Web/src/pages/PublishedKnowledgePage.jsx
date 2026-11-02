@@ -100,7 +100,6 @@ export default function PublishedKnowledgePage() {
                   <tr key={document.id} className="hover:bg-slate-50">
                     <td className="px-5 py-4">
                       <p className="font-medium">{document.name}</p>
-                      <p className="mt-1 line-clamp-1 max-w-sm text-xs text-slate-500">{document.description || '无资料说明'}</p>
                     </td>
                     <td className="px-5 py-4 text-slate-600">{document.category || '-'}</td>
                     <td className="px-5 py-4 text-slate-600">{document.uploader}</td>

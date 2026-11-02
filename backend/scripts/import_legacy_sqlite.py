@@ -70,6 +70,7 @@ def import_legacy_data() -> None:
                 WorkOrder(
                     id=row["id"],
                     alert_id=alert.id,
+                    business_number=f"LEGACY-{str(row['id']).replace('-', '')[:20].upper()}",
                     status=row["status"],
                     priority=priority,
                     summary=row["summary"],

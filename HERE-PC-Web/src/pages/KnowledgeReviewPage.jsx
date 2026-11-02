@@ -16,7 +16,7 @@ const filters = [
   ['all', '全部'],
 ]
 
-export default function KnowledgeReviewPage() {
+export default function KnowledgeReviewPage({ onChanged = () => {} }) {
   const [documents, setDocuments] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
   const [filter, setFilter] = useState('submitted')
@@ -77,6 +77,7 @@ export default function KnowledgeReviewPage() {
       })
       setNote('')
       await load()
+      onChanged()
     } catch (requestError) {
       setError(requestError.response?.data?.detail || '审核操作失败')
     } finally {
@@ -91,6 +92,7 @@ export default function KnowledgeReviewPage() {
     try {
       await api.post(`/knowledge/submissions/${selected.id}/publish`)
       await load()
+      onChanged()
     } catch (requestError) {
       setError(requestError.response?.data?.detail || '资料发布失败')
     } finally {

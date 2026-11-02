@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ConfirmDialog } from '../components/Dialog'
 import { EmptyState, ErrorState, LoadingState } from '../components/PageState'
 import {
   graphStatusLabels,
@@ -37,6 +38,8 @@ export default function AdminKnowledgePage() {
   const [submitting, setSubmitting] = useState(false)
   const [selectedIds, setSelectedIds] = useState([])
   const [batchProcessing, setBatchProcessing] = useState(false)
+  const [confirmation, setConfirmation] = useState(null)
+  const [confirming, setConfirming] = useState(false)
 
   const load = useCallback(async () => {
     setError('')
@@ -138,8 +141,7 @@ export default function AdminKnowledgePage() {
     }
   }
 
-  const runAction = async (document, action, confirmation) => {
-    if (confirmation && !window.confirm(confirmation)) return
+  const runAction = async (document, action) => {
     setError('')
     try {
       if (action === 'delete') {
@@ -149,13 +151,15 @@ export default function AdminKnowledgePage() {
       }
       if (editing?.id === document.id) resetForm()
       await load()
+      return true
     } catch (requestError) {
       setError(requestError.response?.data?.detail || '知识库操作失败')
+      return false
     }
   }
 
-  const runBatchAction = async (action, confirmation) => {
-    if (!selectedIds.length || !window.confirm(confirmation)) return
+  const runBatchAction = async (action) => {
+    if (!selectedIds.length) return false
     setBatchProcessing(true)
     setError('')
     try {
@@ -164,11 +168,23 @@ export default function AdminKnowledgePage() {
         action,
       })
       await load()
+      return true
     } catch (requestError) {
       setError(requestError.response?.data?.detail || '批量操作失败')
+      return false
     } finally {
       setBatchProcessing(false)
     }
+  }
+
+  const confirmAction = async () => {
+    if (!confirmation) return
+    setConfirming(true)
+    const successful = confirmation.kind === 'batch'
+      ? await runBatchAction(confirmation.action)
+      : await runAction(confirmation.document, confirmation.action)
+    if (successful) setConfirmation(null)
+    setConfirming(false)
   }
 
   const download = async (document) => {
@@ -184,7 +200,8 @@ export default function AdminKnowledgePage() {
   if (!documents) return <LoadingState text="正在读取知识库..." />
 
   return (
-    <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_360px]">
+    <>
+      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_360px]">
       <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
           <div>
@@ -220,7 +237,14 @@ export default function AdminKnowledgePage() {
                 <button
                   type="button"
                   disabled={batchProcessing}
-                  onClick={() => runBatchAction('graph_retry', `将选中的 ${selectedIds.length} 份资料重新加入图谱处理队列吗？`)}
+                  onClick={() => setConfirmation({
+                    kind: 'batch',
+                    action: 'graph_retry',
+                    title: '重新处理知识图谱',
+                    message: `将选中的 ${selectedIds.length} 份资料重新加入图谱处理队列吗？`,
+                    confirmLabel: '重新处理',
+                    tone: 'default',
+                  })}
                   className="flex h-9 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
                 >
                   <RefreshCw size={16} />
@@ -229,7 +253,14 @@ export default function AdminKnowledgePage() {
                 <button
                   type="button"
                   disabled={batchProcessing}
-                  onClick={() => runBatchAction('archive', `确定批量下架选中的 ${selectedIds.length} 份资料吗？`)}
+                  onClick={() => setConfirmation({
+                    kind: 'batch',
+                    action: 'archive',
+                    title: '批量下架资料',
+                    message: `确定批量下架选中的 ${selectedIds.length} 份资料吗？`,
+                    confirmLabel: '确认下架',
+                    tone: 'warning',
+                  })}
                   className="flex h-9 items-center gap-2 rounded-md border border-amber-300 bg-white px-3 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
                 >
                   <Archive size={16} />
@@ -241,7 +272,14 @@ export default function AdminKnowledgePage() {
               <button
                 type="button"
                 disabled={batchProcessing}
-                onClick={() => runBatchAction('restore', `确定恢复选中的 ${selectedIds.length} 份资料吗？`)}
+                onClick={() => setConfirmation({
+                  kind: 'batch',
+                  action: 'restore',
+                  title: '批量恢复资料',
+                  message: `确定恢复选中的 ${selectedIds.length} 份资料吗？`,
+                  confirmLabel: '确认恢复',
+                  tone: 'default',
+                })}
                 className="flex h-9 items-center gap-2 rounded-md border border-emerald-300 bg-white px-3 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
               >
                 <RotateCcw size={16} />
@@ -313,12 +351,28 @@ export default function AdminKnowledgePage() {
                         {document.status === 'published' ? (
                           <>
                             <button type="button" title="重新处理知识图谱" onClick={() => runAction(document, 'graph/retry')} className="rounded-md p-2 text-slate-500 hover:bg-slate-100"><RefreshCw size={18} /></button>
-                            <button type="button" title="下架资料" onClick={() => runAction(document, 'archive', `确定下架“${document.name}”吗？`)} className="rounded-md p-2 text-slate-500 hover:bg-amber-50 hover:text-amber-700"><Archive size={18} /></button>
+                            <button type="button" title="下架资料" onClick={() => setConfirmation({
+                              kind: 'single',
+                              action: 'archive',
+                              document,
+                              title: '下架知识资料',
+                              message: `确定下架“${document.name}”吗？`,
+                              confirmLabel: '确认下架',
+                              tone: 'warning',
+                            })} className="rounded-md p-2 text-slate-500 hover:bg-amber-50 hover:text-amber-700"><Archive size={18} /></button>
                           </>
                         ) : (
                           <>
                             <button type="button" title="恢复发布" onClick={() => runAction(document, 'restore')} className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50"><RotateCcw size={18} /></button>
-                            <button type="button" title="永久删除" onClick={() => runAction(document, 'delete', `永久删除“${document.name}”及其文件？此操作无法撤销。`)} className="rounded-md p-2 text-rose-600 hover:bg-rose-50"><Trash2 size={18} /></button>
+                            <button type="button" title="永久删除" onClick={() => setConfirmation({
+                              kind: 'single',
+                              action: 'delete',
+                              document,
+                              title: '永久删除知识资料',
+                              message: `永久删除“${document.name}”及其文件？此操作无法撤销。`,
+                              confirmLabel: '永久删除',
+                              tone: 'danger',
+                            })} className="rounded-md p-2 text-rose-600 hover:bg-rose-50"><Trash2 size={18} /></button>
                           </>
                         )}
                       </div>
@@ -380,6 +434,17 @@ export default function AdminKnowledgePage() {
           </button>
         </form>
       </section>
-    </div>
+      </div>
+      <ConfirmDialog
+        open={Boolean(confirmation)}
+        title={confirmation?.title}
+        message={confirmation?.message}
+        confirmLabel={confirmation?.confirmLabel}
+        tone={confirmation?.tone}
+        busy={confirming}
+        onCancel={() => setConfirmation(null)}
+        onConfirm={confirmAction}
+      />
+    </>
   )
 }

@@ -72,6 +72,19 @@ def hash_sensitive_identifier(value: str) -> str:
     ).hexdigest()
 
 
+def create_password_reset_token() -> tuple[str, str]:
+    token = secrets.token_urlsafe(32)
+    return token, hash_password_reset_token(token)
+
+
+def hash_password_reset_token(token: str) -> str:
+    return hmac.new(
+        get_settings().jwt_secret.encode("utf-8"),
+        token.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
 def create_access_token(
     subject: str,
     actor_type: str,

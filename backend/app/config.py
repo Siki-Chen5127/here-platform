@@ -40,6 +40,16 @@ class Settings:
     bootstrap_admin_password: str
     bootstrap_admin_name: str
     upload_dir: Path
+    frontend_url: str
+    smtp_host: str | None
+    smtp_port: int
+    smtp_username: str | None
+    smtp_password: str | None
+    smtp_from: str | None
+    smtp_use_tls: bool
+    deepseek_api_key: str | None
+    deepseek_base_url: str
+    deepseek_model: str
 
     @property
     def is_production(self) -> bool:
@@ -75,6 +85,16 @@ def get_settings() -> Settings:
         bootstrap_admin_password=os.getenv("HERE_BOOTSTRAP_ADMIN_PASSWORD", "ChangeMe123!"),
         bootstrap_admin_name=os.getenv("HERE_BOOTSTRAP_ADMIN_NAME", "系统管理员"),
         upload_dir=Path(os.getenv("HERE_UPLOAD_DIR", str(BASE_DIR / "uploads"))),
+        frontend_url=os.getenv("HERE_FRONTEND_URL", "http://127.0.0.1:5173").rstrip("/"),
+        smtp_host=os.getenv("HERE_SMTP_HOST") or None,
+        smtp_port=int(os.getenv("HERE_SMTP_PORT", "587")),
+        smtp_username=os.getenv("HERE_SMTP_USERNAME") or None,
+        smtp_password=os.getenv("HERE_SMTP_PASSWORD") or None,
+        smtp_from=os.getenv("HERE_SMTP_FROM") or None,
+        smtp_use_tls=_as_bool(os.getenv("HERE_SMTP_USE_TLS"), default=True),
+        deepseek_api_key=os.getenv("HERE_DEEPSEEK_API_KEY") or None,
+        deepseek_base_url=os.getenv("HERE_DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
+        deepseek_model=os.getenv("HERE_DEEPSEEK_MODEL", "deepseek-flash"),
     )
     settings.validate()
     return settings

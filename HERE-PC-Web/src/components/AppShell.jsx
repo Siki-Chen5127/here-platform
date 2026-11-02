@@ -2,7 +2,7 @@ import { HeartPulse, LogOut, Menu, X } from 'lucide-react'
 import { useState } from 'react'
 import { platformConfig, reviewNavigation, roleLabels } from '../config/platforms'
 
-export default function AppShell({ user, currentView, onNavigate, onLogout, children }) {
+export default function AppShell({ user, currentView, onNavigate, onLogout, badges = {}, children }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const platform = platformConfig[user.role]
   const hasReviewNavigation = platform.navigation.some((item) => item.id === 'review')
@@ -58,7 +58,12 @@ export default function AppShell({ user, currentView, onNavigate, onLogout, chil
                 className={`flex h-11 w-full items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors ${active ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
               >
                 <Icon size={19} />
-                {item.label}
+                <span className="flex-1 text-left">{item.label}</span>
+                {badges[item.id] > 0 && (
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1.5 text-xs font-semibold text-white">
+                    {badges[item.id] > 99 ? '99+' : badges[item.id]}
+                  </span>
+                )}
               </button>
             )
           })}

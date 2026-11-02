@@ -66,7 +66,7 @@ export const platformConfig = {
     description: '账号、知识库与系统审计',
     navigation: [
       { id: 'dashboard', label: '系统概览', icon: LayoutDashboard },
-      { id: 'applications', label: '入驻审核', icon: UserRoundCheck },
+      { id: 'reviews', label: '审核中心', icon: UserRoundCheck },
       { id: 'staff', label: '工作人员账号', icon: UserRoundCog },
       { id: 'knowledge', label: '知识库管理', icon: ScrollText },
       { id: 'audit', label: '审计日志', icon: ShieldCheck },

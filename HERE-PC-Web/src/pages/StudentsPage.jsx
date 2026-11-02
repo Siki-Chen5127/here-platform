@@ -1,3 +1,4 @@
+import { Phone } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { EmptyState, ErrorState, LoadingState } from '../components/PageState'
 import { api } from '../services/api'
@@ -51,6 +52,7 @@ export default function StudentsPage() {
           <thead className="bg-slate-50 text-xs text-slate-500">
             <tr>
               <th className="px-5 py-3 font-medium">姓名</th>
+              <th className="px-5 py-3 font-medium">联系电话</th>
               <th className="px-5 py-3 font-medium">学号</th>
               <th className="px-5 py-3 font-medium">学院 / 专业</th>
               <th className="px-5 py-3 font-medium">班级</th>
@@ -61,6 +63,15 @@ export default function StudentsPage() {
             {students.map((student) => (
               <tr key={student.id} className="hover:bg-slate-50">
                 <td className="px-5 py-4 font-medium">{student.name}</td>
+                <td className="px-5 py-4">
+                  <a
+                    href={`tel:${student.phone}`}
+                    className="inline-flex items-center gap-1.5 text-emerald-700 hover:underline"
+                  >
+                    <Phone size={15} />
+                    {student.phone}
+                  </a>
+                </td>
                 <td className="px-5 py-4 text-slate-600">{student.studentNumber || '-'}</td>
                 <td className="px-5 py-4 text-slate-600">{[student.college, student.major].filter(Boolean).join(' / ') || '-'}</td>
                 <td className="px-5 py-4 text-slate-600">{student.className || '-'}</td>

@@ -1,5 +1,6 @@
 import { FilePenLine, FileUp, LoaderCircle, Send, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { ConfirmDialog } from '../components/Dialog'
 import { EmptyState, ErrorState, LoadingState } from '../components/PageState'
 import {
   editableKnowledgeStatuses,
@@ -24,6 +25,8 @@ export default function KnowledgeSubmissionsPage({ role }) {
   const [file, setFile] = useState(null)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(async () => {
     setError('')
@@ -111,14 +114,17 @@ export default function KnowledgeSubmissionsPage({ role }) {
   }
 
   const remove = async (document) => {
-    if (!window.confirm(`确定删除草稿“${document.name}”吗？`)) return
+    setDeleting(true)
     setError('')
     try {
       await api.delete(`/knowledge/submissions/${document.id}`)
       if (editing?.id === document.id) resetForm()
       await load()
+      setPendingDelete(null)
     } catch (requestError) {
       setError(requestError.response?.data?.detail || '资料删除失败')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -137,7 +143,8 @@ export default function KnowledgeSubmissionsPage({ role }) {
   if (!documents) return <LoadingState text="正在读取我的资料..." />
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+    <>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
       <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">
           <h2 className="font-semibold">我的资料</h2>
@@ -183,7 +190,7 @@ export default function KnowledgeSubmissionsPage({ role }) {
                           type="button"
                           title="删除草稿"
                           aria-label={`删除 ${document.name}`}
-                          onClick={() => remove(document)}
+                          onClick={() => setPendingDelete(document)}
                           className="rounded-md p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-600"
                         >
                           <Trash2 size={18} />
@@ -299,6 +306,17 @@ export default function KnowledgeSubmissionsPage({ role }) {
           </button>
         </form>
       </section>
-    </div>
+      </div>
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title="删除资料草稿"
+        message={pendingDelete ? `确定删除草稿“${pendingDelete.name}”吗？删除后无法恢复。` : ''}
+        confirmLabel="确认删除"
+        tone="danger"
+        busy={deleting}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => remove(pendingDelete)}
+      />
+    </>
   )
 }

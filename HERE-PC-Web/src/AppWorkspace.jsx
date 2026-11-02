@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import AppShell from './components/AppShell'
 import { platformConfig, roleLabels } from './config/platforms'
 import ArchivesPage from './pages/ArchivesPage'
@@ -10,12 +10,13 @@ import KnowledgeReviewPage from './pages/KnowledgeReviewPage'
 import KnowledgeSubmissionsPage from './pages/KnowledgeSubmissionsPage'
 import LoginPage from './pages/LoginPage'
 import PublishedKnowledgePage from './pages/PublishedKnowledgePage'
+import ReviewCenterPage from './pages/ReviewCenterPage'
 import StaffPage from './pages/StaffPage'
 import StaffApplicationsPage from './pages/StaffApplicationsPage'
 import StaffProfilePage from './pages/StaffProfilePage'
 import StudentsPage from './pages/StudentsPage'
 import WorkordersPage from './pages/WorkordersPage'
-import { sessionStore } from './services/api'
+import { api, sessionStore } from './services/api'
 
 function UnsupportedPlatform({ user, onLogout }) {
   return (
@@ -40,6 +41,36 @@ function UnsupportedPlatform({ user, onLogout }) {
 export default function AppWorkspace() {
   const [currentUser, setCurrentUser] = useState(() => sessionStore.getUser())
   const [currentView, setCurrentView] = useState('dashboard')
+  const [reviewCounts, setReviewCounts] = useState({ staffApplications: 0, knowledgeSubmissions: 0, total: 0 })
+  const [pendingKnowledgeReviews, setPendingKnowledgeReviews] = useState(0)
+  const [pendingWorkorders, setPendingWorkorders] = useState(0)
+
+  useEffect(() => {
+    const roleName = currentUser ? (roleLabels[currentUser.role] || currentUser.role) : '工作人员登录'
+    document.title = `${roleName} | HERE`
+  }, [currentUser])
+
+  const loadReviewCounts = useCallback(async () => {
+    if (currentUser?.role !== 'admin') return
+    try {
+      const response = await api.get('/admin/review-summary')
+      setReviewCounts(response.data)
+    } catch {
+      // Badge refresh failure must not block the workspace.
+    }
+  }, [currentUser?.role])
+
+  const loadKnowledgeReviewCount = useCallback(async () => {
+    if (currentUser?.role !== 'center_director') return
+    try {
+      const response = await api.get('/knowledge/submissions')
+      setPendingKnowledgeReviews(
+        response.data.filter((document) => document.status === 'submitted').length,
+      )
+    } catch {
+      // Badge refresh failure must not block the workspace.
+    }
+  }, [currentUser?.role])
 
   useEffect(() => {
     const handleUnauthorized = () => {
@@ -49,6 +80,66 @@ export default function AppWorkspace() {
     window.addEventListener('here:unauthorized', handleUnauthorized)
     return () => window.removeEventListener('here:unauthorized', handleUnauthorized)
   }, [])
+
+  useEffect(() => {
+    if (currentUser?.role !== 'admin') return undefined
+    let active = true
+    const refresh = () => {
+      api.get('/admin/review-summary')
+        .then((response) => {
+          if (active) setReviewCounts(response.data)
+        })
+        .catch(() => {})
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 30000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [currentUser?.role])
+
+  useEffect(() => {
+    if (currentUser?.role !== 'center_director') {
+      setPendingKnowledgeReviews(0)
+      return undefined
+    }
+
+    loadKnowledgeReviewCount()
+    const timer = window.setInterval(loadKnowledgeReviewCount, 30000)
+    window.addEventListener('focus', loadKnowledgeReviewCount)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', loadKnowledgeReviewCount)
+    }
+  }, [currentUser?.role, loadKnowledgeReviewCount])
+
+  useEffect(() => {
+    if (!['counselor', 'psychologist'].includes(currentUser?.role)) {
+      setPendingWorkorders(0)
+      return undefined
+    }
+
+    let active = true
+    const refresh = () => {
+      api.get('/workorders/summary')
+        .then((response) => {
+          if (active) setPendingWorkorders(response.data.pending || 0)
+        })
+        .catch(() => {})
+    }
+
+    refresh()
+    const timer = window.setInterval(refresh, 30000)
+    window.addEventListener('focus', refresh)
+    window.addEventListener('here:workorders-changed', refresh)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      window.removeEventListener('focus', refresh)
+      window.removeEventListener('here:workorders-changed', refresh)
+    }
+  }, [currentUser?.role])
 
   const logout = () => {
     sessionStore.clear()
@@ -83,12 +174,14 @@ export default function AppWorkspace() {
         return <StaffPage currentUser={currentUser} />
       case 'applications':
         return <StaffApplicationsPage />
+      case 'reviews':
+        return <ReviewCenterPage counts={reviewCounts} onRefresh={loadReviewCounts} />
       case 'profile':
-        return <StaffProfilePage />
+        return <StaffProfilePage onLogout={logout} />
       case 'submissions':
         return <KnowledgeSubmissionsPage role={currentUser.role} />
       case 'review':
-        return <KnowledgeReviewPage />
+        return <KnowledgeReviewPage onChanged={loadKnowledgeReviewCount} />
       case 'knowledge':
         return currentUser.role === 'admin' ? <AdminKnowledgePage /> : <PublishedKnowledgePage />
       case 'audit':
@@ -104,6 +197,7 @@ export default function AppWorkspace() {
       currentView={currentView}
       onNavigate={setCurrentView}
       onLogout={logout}
+      badges={{ review: pendingKnowledgeReviews, reviews: reviewCounts.total, workorders: pendingWorkorders }}
     >
       {renderCurrentPage()}
     </AppShell>
