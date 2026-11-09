@@ -12,6 +12,34 @@ HERE-PC-Web/node_modules/
 HERE-PC-Web/dist/
 HERE-PC-Web/.env.local
 HERE-PC-Web/*.log
+# 环境配置与密钥
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
 
-# 本地 runbook，含演示账号明文密码与真实邮箱，禁止入库
+# 依赖、缓存与构建产物
+node_modules/
+.venv/
+__pycache__/
+.pytest_cache/
+.expo/
+dist/
+build/
+*.apk
+*.aab
+*.log
+
+# 本地业务数据
+*.db
+*.db-*
+*.sqlite*
+uploads/
+
+# 开发记录与临时交付物
 测试.txt
+report_work/
+deliverables/
+output/
+outputs/

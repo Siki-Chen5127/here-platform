@@ -53,10 +53,15 @@ async def chat_with_ai(
             system_prompt=CHAT_SYSTEM_PROMPT,
             messages=[message.model_dump() for message in payload.messages],
             temperature=0.8,
+            thinking=True,
         )
     except DeepSeekServiceError as error:
         _raise_ai_http_error(error)
-    return MobileAiResponse(content=result.content, model=result.model)
+    return MobileAiResponse(
+        content=result.content,
+        model=result.model,
+        reasoning_content=result.reasoning_content,
+    )
 
 
 @router.post("/ai/safety-analysis", response_model=MobileAiResponse)

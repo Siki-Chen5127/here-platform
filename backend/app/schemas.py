@@ -244,6 +244,7 @@ class MobileSafetyAnalysisRequest(BaseModel):
 class MobileAiResponse(BaseModel):
     content: str
     model: str
+    reasoning_content: str = ""
 
 
 class WorkOrderResolveRequest(BaseModel):
